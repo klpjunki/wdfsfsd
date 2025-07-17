@@ -236,6 +236,18 @@ async def claim_referral_reward(telegram_id: int, quest_type: str, db: AsyncSess
     
     else:
         raise HTTPException(status_code=400, detail="Неизвестный тип задания")
+    
+@router.get("/public-exchange-rates")
+async def public_exchange_rates(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ExchangeRate).order_by(ExchangeRate.to_currency))
+    rates = result.scalars().all()
+    return {
+        "rates": [
+            {"to_currency": rate.to_currency, "rate": rate.rate}
+            for rate in rates
+        ]
+    }
+
 
 @router.get("/{telegram_id}", response_model=UserOut)
 async def get_user(
@@ -756,13 +768,3 @@ async def exchange_currency(
     }
 
 
-@router.get("/public-exchange-rates")
-async def public_exchange_rates(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ExchangeRate).order_by(ExchangeRate.to_currency))
-    rates = result.scalars().all()
-    return {
-        "rates": [
-            {"to_currency": rate.to_currency, "rate": rate.rate}
-            for rate in rates
-        ]
-    }
