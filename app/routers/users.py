@@ -756,15 +756,13 @@ async def exchange_currency(
     }
 
 
-@router.get("/exchange-rate")
-async def get_exchange_rate(to_currency: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(ExchangeRate.rate)
-        .where(ExchangeRate.to_currency == to_currency)
-        .order_by(ExchangeRate.last_updated.desc())
-        .limit(1)
-    )
-    rate = result.scalar_one_or_none()
-    if rate is None:
-        return {"rate": 1}
-    return {"rate": rate}
+@router.get("/public-exchange-rates")
+async def public_exchange_rates(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ExchangeRate).order_by(ExchangeRate.currency_id))
+    rates = result.scalars().all()
+    return {
+        "rates": [
+            {"currency_id": rate.currency_id, "rate": rate.rate}
+            for rate in rates
+        ]
+    }
