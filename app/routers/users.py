@@ -18,6 +18,8 @@ from sqlalchemy import delete
 import os  
 from sqlalchemy.orm import Session
 from app.models import UserQuestStatus, Quest, User
+from app.models import User, PromoCode, UserPromoCode
+
 
 
 from app.schemas import ExchangeRequestCreate  
@@ -616,27 +618,44 @@ async def transfer_by_username(
     await db.refresh(receiver)
     return {"status": "success", "sender_coins": sender.coins, "receiver_coins": receiver.coins}
 
+
+
 @router.post("/{telegram_id}/promocode")
 async def apply_promocode(telegram_id: int, code: str, db: AsyncSession = Depends(get_db)):
     user = await db.get(User, telegram_id)
     if not user:
         raise HTTPException(404, "User not found")
+    
     result = await db.execute(select(PromoCode).where(PromoCode.code == code))
     promocode = result.scalar_one_or_none()
     if not promocode or promocode.uses_left <= 0:
         raise HTTPException(400, "Invalid or expired promo code")
+    
+    existing = await db.execute(
+        select(UserPromoCode).where(
+            UserPromoCode.user_id == user.telegram_id,
+            UserPromoCode.code == code
+        )
+    )
+    used_record = existing.scalar_one_or_none()
+    if used_record:
+        raise HTTPException(400, "You have already used this promo code")
+
     if promocode.reward_type == "coins":
         user.coins += promocode.value
     elif promocode.reward_type == "energy":
-       user.energy = user.energy + promocode.value
+        user.energy = user.energy + promocode.value
+    
     promocode.uses_left -= 1
+
+    new_use = UserPromoCode(user_id=user.telegram_id, code=code, used_at=datetime.utcnow())
+    db.add(new_use)
+
     await db.commit()
     await db.refresh(user)
     await db.refresh(promocode)
+
     return {"status": "success", "reward_type": promocode.reward_type, "reward_value": promocode.value}
-
-
-
 @router.get("/", response_model=list[UserOut])
 async def get_all_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))

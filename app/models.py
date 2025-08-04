@@ -114,3 +114,11 @@ class ExchangeRequest(Base):
     processed_at = Column(DateTime, nullable=True)
     
     user = relationship("User", backref="exchange_requests")
+
+class UserPromoCode(Base):
+    __tablename__ = "user_promocodes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
+    code = Column(String(32), ForeignKey("promocodes.code"), nullable=False)
+    used_at = Column(DateTime, default=datetime.utcnow, nullable=False)
