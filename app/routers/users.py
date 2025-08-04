@@ -872,3 +872,29 @@ async def claim_quest_reward(telegram_id: int, quest_id: int, db: AsyncSession =
     user_quest.completed = True
     await db.commit()
     return {"status": "reward_claimed", "reward": reward}
+
+@router.get("/{telegram_id}/quests")
+async def get_user_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
+    )
+    user_quests = result.scalars().all()
+    
+    quests_result = await db.execute(select(Quest).where(Quest.active == True))
+    quests = quests_result.scalars().all()
+    
+    response = []
+    for quest in quests:
+        status = next((uq for uq in user_quests if uq.quest_id == quest.id), None)
+        response.append({
+            "id": quest.id,
+            "title": quest.title,
+            "quest_type": quest.quest_type,
+            "reward_type": quest.reward_type,
+            "reward_value": quest.reward_value,
+            "description": quest.description,
+            "timer_started_at": status.timer_started_at.isoformat() if status and status.timer_started_at else None,
+            "completed": status.completed if status else False,
+            "reward_claimed": status.reward_claimed if status else False,
+        })
+    return response
