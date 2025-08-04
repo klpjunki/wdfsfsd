@@ -791,7 +791,7 @@ async def start_quest_timer(telegram_id: int, quest_id: int, db: AsyncSession = 
             quest_id=quest_id,
             completed=False,
             reward_claimed=False,
-            timer_started_at=datetime.utcnow()
+            timer_started_at=datetime.now(timezone.utc)
         )
         db.add(user_quest)
     else:
