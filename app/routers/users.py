@@ -850,15 +850,23 @@ async def claim_quest_reward(telegram_id: int, quest_id: int, db: AsyncSession =
     if not user or not quest:
         raise HTTPException(404, "User or Quest not found")
 
-    reward = quest.reward_value
     now_utc = datetime.now(timezone.utc)
-    if user.boost_expiry and user.boost_expiry > now_utc:
-        reward *= user.boost_multiplier
+    
+    # Если тип награды boost — активируем буст на пользователя
+    if quest.reward_type == "boost":
+        user.boost_multiplier = quest.reward_value
+        user.boost_expiry = now_utc + timedelta(minutes=BOOST_DURATION_MINUTES)
+        reward = 0  # Буст не даёт мгновенной награды, а действует длительно
 
-    if quest.reward_type == "energy":
-        user.energy = min(user.max_energy, user.energy + reward)
-    elif quest.reward_type == "coins":
-        user.coins += reward
+    else:
+        reward = quest.reward_value
+        if user.boost_expiry and user.boost_expiry > now_utc:
+            reward *= user.boost_multiplier
+
+        if quest.reward_type == "energy":
+            user.energy = min(user.max_energy, user.energy + reward)
+        elif quest.reward_type == "coins":
+            user.coins += reward
 
     user_quest.reward_claimed = True
     user_quest.completed = True
