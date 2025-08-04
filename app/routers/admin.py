@@ -410,3 +410,14 @@ async def update_quest(
     await db.commit()
     await db.refresh(quest)
     return quest
+
+@router.get("/quests", summary="Получить список заданий")
+async def get_quests(
+    admin_secret: str = Header(..., description="Админский секретный ключ"),
+    db: AsyncSession = Depends(get_db)
+):
+    if not check_admin(admin_secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    result = await db.execute(select(Quest).order_by(Quest.id.desc()))
+    quests = result.scalars().all()
+    return quests
