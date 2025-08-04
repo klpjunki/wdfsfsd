@@ -96,7 +96,7 @@ class TransferByUsernameRequest(BaseModel):
         return v.strip()
 
 GLOBAL_MARKET_TIMER_START = datetime.now(timezone.utc)
-GLOBAL_MARKET_TIMER_END = GLOBAL_MARKET_TIMER_START + timedelta(days=90)
+GLOBAL_MARKET_TIMER_END = datetime(2025, 10, 17, 16, 0, 0, tzinfo=timezone.utc)
 
 
 def generate_referral_code(length: int = 8) -> str:

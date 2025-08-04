@@ -63,12 +63,6 @@ async def auto_daily_bonus_for_all_users():
                 bonus = user.level * 1000
                 user.coins += bonus
                 user.last_daily_login = now
-                if user.daily_streak == 7:
-                    user.level = 1
-                    user.daily_streak = 0
-                    user.total_clicks = 0
-                    user.energy = 6500
-                    user.max_energy = 6500
             await session.commit()
             logger.info("Бонусы выданы автоматически всем пользователям")
     except Exception as e:
