@@ -772,7 +772,6 @@ async def exchange_currency(
 
 
 
-router = APIRouter(prefix="/users", tags=["users"])
 
 BOOST_DURATION_MINUTES = 10  
 
@@ -795,7 +794,7 @@ async def start_quest_timer(telegram_id: int, quest_id: int, db: AsyncSession = 
         )
         db.add(user_quest)
     else:
-        user_quest.timer_started_at = datetime.utcnow()
+        user_quest.timer_started_at = datetime.now(timezone.utc)
         user_quest.completed = False
         user_quest.reward_claimed = False
     await db.commit()
@@ -812,7 +811,7 @@ async def get_quest_status(telegram_id: int, quest_id: int, db: AsyncSession = D
     user_quest = user_quest.scalars().first()
     if not user_quest:
         raise HTTPException(404, "Quest not started")
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     can_claim = False
     if user_quest.timer_started_at:
         elapsed = now - user_quest.timer_started_at
@@ -841,7 +840,7 @@ async def claim_quest_reward(telegram_id: int, quest_id: int, db: AsyncSession =
         raise HTTPException(404, "Quest not started")
     if user_quest.reward_claimed:
         raise HTTPException(400, "Reward already claimed")
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     elapsed = now - user_quest.timer_started_at if user_quest.timer_started_at else timedelta(seconds=0)
     if elapsed < timedelta(minutes=BOOST_DURATION_MINUTES):
         raise HTTPException(400, "Timer not finished")
@@ -852,7 +851,7 @@ async def claim_quest_reward(telegram_id: int, quest_id: int, db: AsyncSession =
         raise HTTPException(404, "User or Quest not found")
 
     reward = quest.reward_value
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
     if user.boost_expiry and user.boost_expiry > now_utc:
         reward *= user.boost_multiplier
 
