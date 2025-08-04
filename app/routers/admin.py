@@ -14,6 +14,8 @@ from sqlalchemy.orm import joinedload
 from app.models import ExchangeRequest
 from app.models import PromoCode
 from app.schemas import PromoCodeCreate
+from app.models import Quest  
+
 
 import random
 import string
@@ -350,3 +352,61 @@ async def get_exchange_rates(
         }
         for rate in rates
     ]
+class QuestUpdate(BaseModel):
+    title: str | None = None
+    quest_type: str | None = None
+    reward_type: str | None = None
+    reward_value: int | None = None
+    url: str | None = None
+    description: str | None = None
+    active: bool | None = None
+
+
+@router.post("/quests", summary="Создать новое задание", tags=["admin"])
+async def create_quest(data: QuestCreate, admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not check_admin(admin_secret):
+        raise HTTPException(403, "Forbidden")
+    quest = Quest(
+        title=data.title,
+        quest_type=data.quest_type,
+        reward_type=data.reward_type,
+        reward_value=data.reward_value,
+        url=data.url,
+        description=data.description,
+        active=True
+    )
+    db.add(quest)
+    await db.commit()
+    await db.refresh(quest)
+    return quest
+
+
+@router.delete("/quests/{quest_id}", summary="Удалить задание", tags=["admin"])
+async def delete_quest(quest_id: int, admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not check_admin(admin_secret):
+        raise HTTPException(403, "Forbidden")
+    quest = await db.get(Quest, quest_id)
+    if not quest:
+        raise HTTPException(404, "Задание не найдено")
+    await db.delete(quest)
+    await db.commit()
+    return {"status": "deleted", "quest_id": quest_id}
+
+
+@router.patch("/quests/{quest_id}", summary="Обновить задание", tags=["admin"])
+async def update_quest(
+    quest_id: int,
+    data: QuestUpdate,
+    admin_secret: str,
+    db: AsyncSession = Depends(get_db)
+):
+    if not check_admin(admin_secret):
+        raise HTTPException(403, "Forbidden")
+    quest = await db.get(Quest, quest_id)
+    if not quest:
+        raise HTTPException(404, "Задание не найдено")
+    for field, value in data.dict(exclude_unset=True).items():
+        setattr(quest, field, value)
+    await db.commit()
+    await db.refresh(quest)
+    return quest

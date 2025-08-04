@@ -17,6 +17,8 @@ from app.schemas import ExchangeRequestCreate, SetExchangeRateRequest, CurrencyT
 from sqlalchemy import delete
 import os  
 from sqlalchemy.orm import Session
+from app.models import UserQuestStatus, Quest, User
+
 
 from app.schemas import ExchangeRequestCreate  
 from app.models import ExchangeRequest  
@@ -768,3 +770,98 @@ async def exchange_currency(
     }
 
 
+
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+BOOST_DURATION_MINUTES = 10  
+
+@router.post("/{telegram_id}/quests/{quest_id}/start")
+async def start_quest_timer(telegram_id: int, quest_id: int, db: AsyncSession = Depends(get_db)):
+    user_quest = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest_id
+        )
+    )
+    user_quest = user_quest.scalars().first()
+    if not user_quest:
+        user_quest = UserQuestStatus(
+            user_id=telegram_id,
+            quest_id=quest_id,
+            completed=False,
+            reward_claimed=False,
+            timer_started_at=datetime.utcnow()
+        )
+        db.add(user_quest)
+    else:
+        user_quest.timer_started_at = datetime.utcnow()
+        user_quest.completed = False
+        user_quest.reward_claimed = False
+    await db.commit()
+    return {"status": "timer_started"}
+
+@router.get("/{telegram_id}/quests/{quest_id}/status")
+async def get_quest_status(telegram_id: int, quest_id: int, db: AsyncSession = Depends(get_db)):
+    user_quest = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest_id
+        )
+    )
+    user_quest = user_quest.scalars().first()
+    if not user_quest:
+        raise HTTPException(404, "Quest not started")
+    now = datetime.utcnow()
+    can_claim = False
+    if user_quest.timer_started_at:
+        elapsed = now - user_quest.timer_started_at
+        if elapsed >= timedelta(minutes=BOOST_DURATION_MINUTES):
+            can_claim = True
+    else:
+        elapsed = None
+    return {
+        "completed": user_quest.completed,
+        "reward_claimed": user_quest.reward_claimed,
+        "timer_started_at": user_quest.timer_started_at,
+        "elapsed_seconds": elapsed.total_seconds() if elapsed else None,
+        "can_claim": can_claim
+    }
+
+@router.post("/{telegram_id}/quests/{quest_id}/claim")
+async def claim_quest_reward(telegram_id: int, quest_id: int, db: AsyncSession = Depends(get_db)):
+    user_quest = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest_id
+        )
+    )
+    user_quest = user_quest.scalars().first()
+    if not user_quest:
+        raise HTTPException(404, "Quest not started")
+    if user_quest.reward_claimed:
+        raise HTTPException(400, "Reward already claimed")
+    now = datetime.utcnow()
+    elapsed = now - user_quest.timer_started_at if user_quest.timer_started_at else timedelta(seconds=0)
+    if elapsed < timedelta(minutes=BOOST_DURATION_MINUTES):
+        raise HTTPException(400, "Timer not finished")
+    
+    user = await db.get(User, telegram_id)
+    quest = await db.get(Quest, quest_id)
+    if not user or not quest:
+        raise HTTPException(404, "User or Quest not found")
+
+    reward = quest.reward_value
+    now_utc = datetime.utcnow()
+    if user.boost_expiry and user.boost_expiry > now_utc:
+        reward *= user.boost_multiplier
+
+    if quest.reward_type == "energy":
+        user.energy = min(user.max_energy, user.energy + reward)
+    elif quest.reward_type == "coins":
+        user.coins += reward
+
+    user_quest.reward_claimed = True
+    user_quest.completed = True
+    await db.commit()
+    return {"status": "reward_claimed", "reward": reward}

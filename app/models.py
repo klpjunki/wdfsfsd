@@ -1,9 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, Float
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, Float, ForeignKey
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.database import Base
-from sqlalchemy import ForeignKey  
 from sqlalchemy.orm import relationship  
+
 
 class User(Base):
     __tablename__ = "users"
@@ -48,6 +48,7 @@ class User(Base):
 
     locked_coins = Column(Integer, default=0, nullable=False) 
 
+
 class Quest(Base):
     __tablename__ = "quests"
 
@@ -61,6 +62,22 @@ class Quest(Base):
     url          = Column(String(255), nullable=True)
     description  = Column(String(255), nullable=True)
 
+
+class UserQuestStatus(Base):
+    __tablename__ = "user_quest_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
+    quest_id = Column(Integer, ForeignKey("quests.id"), nullable=False)
+
+    completed = Column(Boolean, default=False, nullable=False)
+    timer_started_at = Column(DateTime, nullable=True)
+    reward_claimed = Column(Boolean, default=False, nullable=False)
+
+    user = relationship("User", backref="quest_statuses")
+    quest = relationship("Quest", backref="user_statuses")
+
+
 class PromoCode(Base):
     __tablename__ = "promocodes"
 
@@ -71,6 +88,7 @@ class PromoCode(Base):
     created_at  = Column(DateTime, default=datetime.now)
     uses_left   = Column(Integer, default=1)
 
+
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
     
@@ -79,6 +97,7 @@ class ExchangeRate(Base):
     to_currency = Column(String(20), nullable=False)    
     rate = Column(Float, nullable=False)
     last_updated = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
 
 class ExchangeRequest(Base):
     __tablename__ = "exchange_requests"
