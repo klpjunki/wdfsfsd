@@ -416,7 +416,7 @@ from fastapi import Header
 
 @router.get("/quests", summary="Получить список заданий")
 async def get_quests(
-    admin_secret: str = Header(..., description="Админский секретный ключ"),
+    admin_secret: str = Header(..., alias="Admin-Secret"),
     db: AsyncSession = Depends(get_db)
 ):
     if not check_admin(admin_secret):
