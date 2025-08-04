@@ -414,13 +414,17 @@ async def update_quest(
 from fastapi import Header
 
 
-@router.get("/quests", summary="Получить список заданий")
-async def get_quests(
-    admin_secret: str = Header(..., alias="Admin-Secret"),
-    db: AsyncSession = Depends(get_db)
-):
-    if not check_admin(admin_secret):
+from fastapi import Header, HTTPException
+
+async def get_admin_secret_header(admin_secret: str = Header(...)):
+    if admin_secret != os.getenv("ADMIN_SECRET"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    return admin_secret
+
+@router.get("/quests")
+async def get_quests(
+    db: AsyncSession = Depends(get_db),
+    admin_secret: str = Depends(get_admin_secret_header)
+):
     result = await db.execute(select(Quest).order_by(Quest.id.desc()))
-    quests = result.scalars().all()
-    return quests
+    return result.scalars().all()
