@@ -85,11 +85,11 @@ class QuestOut(BaseModel):
     id: int
     title: str
     quest_type: Literal["youtube", "telegram"]
-    url: Optional[str] = None  # ← СДЕЛАЙ ТАК
+    url: Optional[str] = None       # Сделайте Optional и дефолт None
     reward_type: Literal["coins", "energy"]
     reward_value: int
     description: Optional[str] = None
-    active: bool = True  # ← И тут добавь дефолт
+    active: Optional[bool] = True   # Сделайте Optional с дефолтом True
 
     class Config:
         from_attributes = True
