@@ -85,15 +85,14 @@ class QuestOut(BaseModel):
     id: int
     title: str
     quest_type: Literal["youtube", "telegram"]
-    url: str
+    url: Optional[str] = None  # ← СДЕЛАЙ ТАК
     reward_type: Literal["coins", "energy"]
     reward_value: int
     description: Optional[str] = None
-    active: bool
+    active: bool = True  # ← И тут добавь дефолт
 
     class Config:
         from_attributes = True
-
 
 # пользователь: начало выполнения и получение награды
 class StartQuestRequest(BaseModel):
