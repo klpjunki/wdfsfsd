@@ -2,7 +2,9 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, F
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.database import Base
-from sqlalchemy.orm import relationship  
+from sqlalchemy.orm import relationship 
+from datetime import datetime, timedelta, timezone
+
 
 
 class User(Base):
@@ -19,34 +21,33 @@ class User(Base):
 
     referral_code = Column(String(16), unique=True, nullable=False)
     referred_by = Column(String(16), nullable=True)
+
+    # ВАЖНО: квесты «пригласить друзей» оставляем как у тебя было
     milestone_5_friends_claimed = Column(Boolean, default=False, nullable=False)
     reward_5_friends_claimed = Column(Boolean, default=False, nullable=False)
     reward_10_friends_claimed = Column(Boolean, default=False, nullable=False)
 
-    youtube_subscribed = Column(Boolean, default=False, nullable=False)
-    youtube_reward_claimed = Column(Boolean, default=False, nullable=False)
-    youtube_timer_started = Column(DateTime(timezone=True), nullable=True)
-
-    telegram_subscribed = Column(Boolean, default=False, nullable=False)
-    telegram_reward_claimed = Column(Boolean, default=False, nullable=False)
-    telegram_timer_started = Column(DateTime(timezone=True), nullable=True)
-
+    # Бусты
     boost_expiry = Column(DateTime(timezone=True), nullable=True)
     boost_multiplier = Column(Integer, default=1, nullable=False)
 
+    # Энергия / ежедневки
     last_energy_update = Column(DateTime(timezone=True),
                                 server_default=func.now(),
                                 nullable=False)
     daily_streak = Column(Integer, default=0, nullable=False)
     last_daily_login = Column(DateTime(timezone=True), nullable=True)
 
+    # Роли
     role = Column(String(20), default="player", nullable=False)
 
+    # Балансы валют
     tanki_blitz_balance = Column(Integer, default=0, nullable=False)
     mir_tankov_balance = Column(Integer, default=0, nullable=False)
     wot_blitz_balance = Column(Integer, default=0, nullable=False)
 
-    locked_coins = Column(Integer, default=0, nullable=False) 
+    # Лоченые коины
+    locked_coins = Column(Integer, default=0, nullable=False)
 
 
 class Quest(Base):
@@ -54,12 +55,18 @@ class Quest(Base):
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
     title        = Column(String(100), nullable=False)
-    quest_type   = Column(String(20))
-    reward_type  = Column(String(20))
+    quest_type   = Column(String(20))  # "youtube" | "telegram" | (оставь другие свои типы при желании)
+    reward_type  = Column(String(20))  # "coins" | "energy"
     reward_value = Column(Integer)
     active       = Column(Boolean, default=True)
     created_at   = Column(DateTime, default=datetime.now)
+
+    # ссылка на задание:
+    #  - youtube: ссылка на видео/канал
+    #  - telegram: @username / https://t.me/username / numeric chat_id
     url          = Column(String(255), nullable=True)
+
+    # опционально краткое описание
     description  = Column(String(255), nullable=True)
 
 
@@ -71,6 +78,7 @@ class UserQuestStatus(Base):
     quest_id = Column(Integer, ForeignKey("quests.id"), nullable=False)
 
     completed = Column(Boolean, default=False, nullable=False)
+    # для YouTube-таймера (10 мин). Для Telegram можно не трогать.
     timer_started_at = Column(DateTime, nullable=True)
     reward_claimed = Column(Boolean, default=False, nullable=False)
 
@@ -115,10 +123,11 @@ class ExchangeRequest(Base):
     
     user = relationship("User", backref="exchange_requests")
 
+
 class UserPromoCode(Base):
     __tablename__ = "user_promocodes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     code = Column(String(32), ForeignKey("promocodes.code"), nullable=False)
-    used_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    used_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

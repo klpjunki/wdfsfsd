@@ -1,17 +1,22 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Literal
 from enum import Enum
 
+
+# --- твои валюты ---
 class CurrencyType(str, Enum):
     TANKI_BLITZ = "Танки Блитц"
     MIR_TANKOV = "Мир танков"
     WOT_BLITZ = "Wot Blitz"
 
+
+# --- пользователи ---
 class UserCreate(BaseModel):
     telegram_id: int = Field(..., gt=0)
     username: Optional[str] = Field(None, max_length=64)
     referred_by: Optional[str] = Field(None, max_length=16)
-    role: Optional[str] = Field("player")  
+    role: Optional[str] = Field("player")
+
 
 class UserOut(BaseModel):
     telegram_id: int
@@ -26,31 +31,74 @@ class UserOut(BaseModel):
     tanki_blitz_balance: int = 0
     mir_tankov_balance: int = 0
     wot_blitz_balance: int = 0
-    locked_coins: int = 0  
-    role: Optional[str] = Field("player")    
-    seconds_left: int = 0  
+    locked_coins: int = 0
+    role: Optional[str] = Field("player")
+    seconds_left: int = 0
 
     class Config:
         from_attributes = True
 
+
+# --- старые квесты у тебя уже есть (если нужны эти схемы — оставь) ---
 class QuestCreate(BaseModel):
     title: str
     quest_type: str
     reward_type: str
     reward_value: int
 
+
+# --- обмен ---
 class ExchangeRequestCreate(BaseModel):
     from_currency: str = "COIN"
     to_currency: CurrencyType
     amount: int
     uid: str
 
+
 class SetExchangeRateRequest(BaseModel):
     currency: CurrencyType
     rate: float
 
+
 class PromoCodeCreate(BaseModel):
-    code: Optional[str] = None  
-    reward_type: str  
+    code: Optional[str] = None
+    reward_type: str
     value: int
     uses_left: int = 1
+
+
+# ============== НОВЫЕ СХЕМЫ ДЛЯ ДИНАМИЧЕСКИХ КВЕСТОВ ==============
+
+# админ создаёт/обновляет квест
+class QuestUpsert(BaseModel):
+    title: str
+    quest_type: Literal["youtube", "telegram"]
+    url: str
+    reward_type: Literal["coins", "energy"]
+    reward_value: int = Field(ge=1)
+    description: Optional[str] = None
+    active: bool = True
+
+
+# выдаём квест на фронт
+class QuestOut(BaseModel):
+    id: int
+    title: str
+    quest_type: Literal["youtube", "telegram"]
+    url: str
+    reward_type: Literal["coins", "energy"]
+    reward_value: int
+    description: Optional[str] = None
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# пользователь: начало выполнения и получение награды
+class StartQuestRequest(BaseModel):
+    quest_id: int
+
+
+class ClaimQuestRequest(BaseModel):
+    quest_id: int

@@ -11,9 +11,8 @@ from datetime import datetime, timedelta, timezone
 import string  
 from app.schemas import UserCreate
 from app.schemas import UserCreate
-from app.services.telegram_checker import check_telegram_subscription
 from app.models import ExchangeRate
-from app.schemas import ExchangeRequestCreate, SetExchangeRateRequest, CurrencyType
+from app.schemas import ExchangeRequestCreate
 from sqlalchemy import delete
 import os  
 from sqlalchemy.orm import Session
@@ -44,12 +43,6 @@ class UserOut(BaseModel):
     milestone_5_friends_claimed: bool = False
     reward_5_friends_claimed: bool = False
     reward_10_friends_claimed: bool = False
-    youtube_subscribed: bool = False
-    youtube_reward_claimed: bool = False
-    youtube_timer_started: Optional[datetime] = None
-    telegram_subscribed: bool = False
-    telegram_reward_claimed: bool = False
-    telegram_timer_started: Optional[datetime] = None
     daily_streak: int = 0
     last_daily_login: Optional[datetime] = None
     role: str = "player"
@@ -63,9 +56,8 @@ class UserOut(BaseModel):
         return value if value is not None else 0
 
     @field_validator(
-        'milestone_5_friends_claimed', 'reward_5_friends_claimed',
-        'reward_10_friends_claimed', 'youtube_subscribed',
-        'telegram_subscribed', mode='before'
+    'milestone_5_friends_claimed', 'reward_5_friends_claimed',
+    'reward_10_friends_claimed', mode='before'
     )
     @classmethod
     def handle_bool_nulls(cls, value):
@@ -266,18 +258,26 @@ async def get_user(
     seconds_left = max(0, int((GLOBAL_MARKET_TIMER_END - now).total_seconds())) if user.role == "player" else 0
 
     return {
-        "telegram_id": user.telegram_id,
-        "username": user.username,
-        "coins": user.coins,
-        "level": user.level,
-        "energy": user.energy,
-        "max_energy": user.max_energy,
-        "total_clicks": user.total_clicks,
-        "referral_code": user.referral_code,
-        "referred_by": user.referred_by,
-        "role": user.role,
-        "seconds_left": seconds_left
-    }
+    "telegram_id": user.telegram_id,
+    "username": user.username,
+    "coins": user.coins,
+    "level": user.level,
+    "energy": user.energy,
+    "max_energy": user.max_energy,
+    "total_clicks": user.total_clicks,
+    "referral_code": user.referral_code,
+    "referred_by": user.referred_by,
+    "milestone_5_friends_claimed": user.milestone_5_friends_claimed,
+    "reward_5_friends_claimed": user.reward_5_friends_claimed,
+    "reward_10_friends_claimed": user.reward_10_friends_claimed,
+    "daily_streak": user.daily_streak,
+    "last_daily_login": user.last_daily_login,
+    "role": user.role,
+    "boost_expiry": user.boost_expiry,
+    "boost_multiplier": user.boost_multiplier,
+    "seconds_left": seconds_left
+}
+
 
 @router.post("/{telegram_id}/click", response_model=ClickResponse)
 async def click_coin(
@@ -395,8 +395,6 @@ async def create_user(
         referred_by=user_data.referred_by,
         boost_expiry=None,
         boost_multiplier=1,
-        youtube_timer_started=None,
-        telegram_timer_started=None,
         role=user_data.role or "player",
         last_energy_update=datetime.now(timezone.utc)
                 )
@@ -405,198 +403,9 @@ async def create_user(
     await db.commit()
     await db.refresh(user)
     return user
-@router.get("/{telegram_id}", response_model=UserOut)
-async def get_user(
-    telegram_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    now = datetime.now(timezone.utc)
-    seconds_left = max(0, int((GLOBAL_MARKET_TIMER_END - now).total_seconds())) if user.role == "player" else 0
 
-    return {
-        "telegram_id": user.telegram_id,
-        "username": user.username,
-        "coins": user.coins,
-        "level": user.level,
-        "energy": user.energy,
-        "max_energy": user.max_energy,
-        "total_clicks": user.total_clicks,
-        "referral_code": user.referral_code,
-        "referred_by": user.referred_by,
-        "milestone_5_friends_claimed": user.milestone_5_friends_claimed,
-        "reward_5_friends_claimed": user.reward_5_friends_claimed,
-        "reward_10_friends_claimed": user.reward_10_friends_claimed,
-        "youtube_subscribed": user.youtube_subscribed,
-        "youtube_reward_claimed": user.youtube_reward_claimed,
-        "youtube_timer_started": user.youtube_timer_started,
-        "telegram_subscribed": user.telegram_subscribed,
-        "telegram_reward_claimed": user.telegram_reward_claimed,
-        "telegram_timer_started": user.telegram_timer_started,
-        "daily_streak": user.daily_streak,
-        "last_daily_login": user.last_daily_login,
-        "role": user.role,
-        "boost_expiry": user.boost_expiry,
-        "boost_multiplier": user.boost_multiplier,
-        "boost_active": user.boost_active,
-        "seconds_left": seconds_left
-    }
 
-@router.get("/{telegram_id}/referral_progress")
-async def get_referral_progress(
-    telegram_id: int, 
-    db: AsyncSession = Depends(get_db)
-):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    result = await db.execute(
-        select(User).where(User.referred_by == user.referral_code)
-    )
-    referrals = result.scalars().all()
-    referral_count = len(referrals)
-    quest_5_status = "completed" if referral_count >= 5 else "in_progress"
-    quest_10_status = "completed" if referral_count >= 10 else "in_progress"
-    reward_5_claimed = user.reward_5_friends_claimed
-    reward_10_claimed = user.reward_10_friends_claimed
-    youtube_completed = user.youtube_subscribed
-    youtube_reward_claimed = user.youtube_reward_claimed
-    youtube_timer_started = user.youtube_timer_started
 
-    youtube_can_claim = False
-    youtube_time_left = None
-
-    if youtube_completed and not youtube_reward_claimed and youtube_timer_started:
-        now = datetime.now(timezone.utc)
-        time_elapsed = (now - youtube_timer_started.replace(tzinfo=timezone.utc)).total_seconds()
-        if time_elapsed >= 600:  
-            youtube_can_claim = True
-            youtube_time_left = 0
-        else:
-            youtube_can_claim = False
-            youtube_time_left = int(600 - time_elapsed)
-    elif youtube_completed and not youtube_reward_claimed:
-        youtube_can_claim = False
-        youtube_time_left = None
-    telegram_subscribed = check_telegram_subscription(telegram_id)
-    
-    return {
-        "referral_count": referral_count,
-        "quest_5_friends": {
-            "status": quest_5_status,
-            "reward_claimed": reward_5_claimed,
-            "can_claim": referral_count >= 5 and not reward_5_claimed
-        },
-        "quest_10_friends": {
-            "status": quest_10_status,
-            "reward_claimed": reward_10_claimed,
-            "can_claim": referral_count >= 10 and not reward_10_claimed
-        },
-        "youtube_quest": {
-            "completed": youtube_completed,
-            "reward_claimed": youtube_reward_claimed,
-            "can_claim": youtube_can_claim,
-            "time_left": youtube_time_left,
-            "timer_started": youtube_timer_started.isoformat() if youtube_timer_started else None
-        },
-        "telegram_quest": {
-            "completed": user.telegram_subscribed,
-            "reward_claimed": user.telegram_reward_claimed,
-            "can_claim": telegram_subscribed and not user.telegram_reward_claimed,
-            "time_left": None  
-        }
-    }
-@router.post("/{telegram_id}/youtube_subscribe")
-async def youtube_subscribe(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-    if user.youtube_subscribed:
-        raise HTTPException(400, "YouTube task already completed")
-    user.youtube_subscribed = True
-    user.youtube_timer_started = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(user)
-    return {"status": "success", "message": "YouTube timer started"}
-
-@router.post("/{telegram_id}/claim_youtube_reward")
-async def claim_youtube_reward(
-    telegram_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not user.youtube_subscribed:
-        raise HTTPException(400, "Complete YouTube task first")
-    if user.youtube_reward_claimed:
-        raise HTTPException(400, "Reward already claimed")
-    if not user.youtube_timer_started:
-        raise HTTPException(400, "Timer not started")
-    now = datetime.now(timezone.utc)
-    elapsed = (now - user.youtube_timer_started.replace(tzinfo=timezone.utc)).total_seconds()
-    
-    if elapsed < 60:  
-        left = 60 - elapsed
-        m, s = divmod(int(left), 60)
-        raise HTTPException(400, f"Wait {m}:{s:02d} before claiming reward")
-    user.boost_expiry = now + timedelta(minutes=10)
-    user.boost_multiplier = 10
-    user.youtube_reward_claimed = True
-    
-    await db.commit()
-    await db.refresh(user)
-    
-    return {
-        "status": "success",
-        "boost_expiry": user.boost_expiry.isoformat(),
-        "boost_multiplier": user.boost_multiplier
-    }
-@router.post("/{telegram_id}/telegram_subscribe")
-async def telegram_subscribe(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-    if user.telegram_subscribed:
-        raise HTTPException(400, "Telegram task already completed")
-    user.telegram_subscribed = True
-    user.telegram_timer_started = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(user)
-    return {"status": "success", "message": "Telegram timer started"}
-
-async def get_user_by_telegram_id(db: AsyncSession, telegram_id: int):
-    result = await db.execute(select(User).where(User.telegram_id == telegram_id))
-    return result.scalars().first()
-
-@router.post("/{telegram_id}/claim_telegram_reward")
-async def claim_telegram_reward(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    telegram_subscribed = check_telegram_subscription(telegram_id)
-    if not telegram_subscribed:
-        raise HTTPException(400, "Подпишитесь на канал для получения награды!")
-
-    user = await get_user_by_telegram_id(db, telegram_id)
-    if not user:
-        raise HTTPException(404, "Пользователь не найден")
-
-    if user.telegram_reward_claimed:
-        raise HTTPException(400, "Награда уже получена")
-    user.boost_active = True
-    user.boost_multiplier = 10  
-    user.boost_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
-    user.telegram_reward_claimed = True
-
-    await db.commit()
-
-    return {
-        "message": "Буст активирован: +10 за клик на 10 минут!",
-        "boost_active": user.boost_active,
-        "boost_multiplier": user.boost_multiplier,
-        "boost_expiry": user.boost_expiry.isoformat()
-    }
 @router.post("/transfer_by_username")
 async def transfer_by_username(
     data: TransferByUsernameRequest,
@@ -648,7 +457,7 @@ async def apply_promocode(telegram_id: int, code: str, db: AsyncSession = Depend
     
     promocode.uses_left -= 1
 
-    new_use = UserPromoCode(user_id=user.telegram_id, code=code, used_at=datetime.utcnow())
+    new_use = UserPromoCode(user_id=user.telegram_id, code=code, used_at=datetime.now(timezone.utc))
     db.add(new_use)
 
     await db.commit()
@@ -725,6 +534,146 @@ async def claim_daily_bonus(
         "next_day_bonus": user.level * 1000 if user.daily_streak != 0 else 1000
     }
 
+
+# === НОВОЕ: выполнение динамических квестов (youtube/telegram) ===
+import os
+import re
+import httpx
+from datetime import datetime, timedelta
+from fastapi import Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database import get_db
+from app.models import User, Quest, UserQuestStatus
+from app.schemas import QuestOut, StartQuestRequest, ClaimQuestRequest
+
+YOUTUBE_WAIT = timedelta(minutes=10)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+
+def _normalize_channel_ref(raw: str) -> str:
+    raw = raw.strip()
+    if re.match(r"^-?\d+$", raw):
+        return raw  # numeric chat id
+    m = re.search(r"(?:t\.me/)?(@?[A-Za-z0-9_]+)$", raw)
+    if m:
+        val = m.group(1)
+        if not val.startswith("@") and not val.startswith("-"):
+            val = f"@{val}"
+        return val
+    if not raw.startswith("@") and not raw.startswith("-"):
+        return f"@{raw}"
+    return raw
+
+
+async def _check_tg_subscription(user_telegram_id: int, channel_ref: str) -> bool:
+    """
+    True если пользователь состоит в канале/чате.
+    БОТ ДОЛЖЕН БЫТЬ АДМИНОМ в этом канале/супергруппе.
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(500, "TELEGRAM_BOT_TOKEN not set")
+    chat_id = _normalize_channel_ref(channel_ref)
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getChatMember"
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url, params={"chat_id": chat_id, "user_id": user_telegram_id})
+        data = r.json()
+        if not data.get("ok"):
+            return False
+        status = data["result"]["status"]
+        return status in ("member", "administrator", "creator")
+
+
+@router.get("/quests/dynamic", response_model=list[QuestOut])
+async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Список активных динамических квестов (YouTube/Telegram).
+    Статичные квесты по друзьям здесь НЕ затрагиваем.
+    """
+    res = await db.execute(select(Quest).where(Quest.active == True))
+    return list(res.scalars())
+
+
+@router.post("/quests/start")
+async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, telegram_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    res = await db.execute(select(Quest).where(Quest.id == body.quest_id, Quest.active == True))
+    quest = res.scalar_one_or_none()
+    if not quest:
+        raise HTTPException(404, "Quest not found or inactive")
+
+    # найдём/создадим статус
+    res_us = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest.id
+        )
+    )
+    us = res_us.scalar_one_or_none()
+    if not us:
+        us = UserQuestStatus(user_id=telegram_id, quest_id=quest.id)
+        db.add(us)
+
+    # для youtube — фиксируем старт таймера
+    if quest.quest_type == "youtube":
+        us.timer_started_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    return {"status": "started"}
+
+
+@router.post("/quests/claim")
+async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, telegram_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    res = await db.execute(select(Quest).where(Quest.id == body.quest_id, Quest.active == True))
+    quest = res.scalar_one_or_none()
+    if not quest:
+        raise HTTPException(404, "Quest not found or inactive")
+
+    res_us = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest.id
+        )
+    )
+    us = res_us.scalar_one_or_none()
+    if not us:
+        raise HTTPException(400, "Quest not started")
+
+    if us.reward_claimed:
+        return {"status": "already_claimed"}
+
+    # проверяем условия
+    if quest.quest_type == "youtube":
+        if not us.timer_started_at:
+            raise HTTPException(400, "Quest not started")
+        if datetime.now(timezone.utc) < us.timer_started_at + YOUTUBE_WAIT:
+            seconds_left = int((us.timer_started_at + YOUTUBE_WAIT - datetime.now(timezone.utc)).total_seconds())
+            raise HTTPException(400, f"Wait {seconds_left} seconds")
+
+    elif quest.quest_type == "telegram":
+        ok = await _check_tg_subscription(user_telegram_id=telegram_id, channel_ref=quest.url)
+        if not ok:
+            raise HTTPException(400, "Подпишитесь на канал и попробуйте снова")
+
+    # выдаём награду
+    if quest.reward_type == "coins":
+        user.coins += int(quest.reward_value)
+    elif quest.reward_type == "energy":
+        user.energy = min(user.max_energy, user.energy + int(quest.reward_value))
+
+    us.completed = True
+    us.reward_claimed = True
+
+    await db.commit()
+    return {"status": "claimed", "reward": quest.reward_type, "amount": quest.reward_value}
+
 from sqlalchemy.future import select
 from app.models import ExchangeRate
 
@@ -737,6 +686,8 @@ async def get_exchange_rate(db: AsyncSession, to_currency: str) -> float:
     )
     rate = result.scalar_one_or_none()
     return rate if rate is not None else 1.0
+
+
 
 
 

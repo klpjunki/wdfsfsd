@@ -15,6 +15,7 @@ from app.models import ExchangeRequest
 from app.models import PromoCode
 from app.schemas import PromoCodeCreate
 from app.models import Quest  
+from datetime import datetime, timedelta, timezone
 
 
 import random
@@ -267,7 +268,7 @@ async def approve_exchange(
         user.wot_blitz_balance += request.received_amount
     
     request.status = "approved"
-    request.processed_at = datetime.now()
+    request.processed_at = datetime.now(timezone.utc)
     
     await db.commit()
     return {"status": "success"}
@@ -293,7 +294,8 @@ async def reject_exchange(
     user.locked_coins -= request.amount
     
     request.status = "rejected"
-    request.processed_at = datetime.now()
+    request.processed_at = datetime.now(timezone.utc)
+
     
     await db.commit()
     return {"status": "success"}
@@ -352,72 +354,72 @@ async def get_exchange_rates(
         }
         for rate in rates
     ]
-class QuestUpdate(BaseModel):
-    title: str | None = None
-    quest_type: str | None = None
-    reward_type: str | None = None
-    reward_value: int | None = None
-    url: str | None = None
-    description: str | None = None
-    active: bool | None = None
+# === НОВОЕ: CRUD для динамических квестов ===
+import os
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
+from app.database import get_db
+from app.models import Quest
+from app.schemas import QuestUpsert, QuestOut
 
+# если у тебя уже есть router = APIRouter(...), используй его
+# иначе раскомментируй строку ниже:
+# router = APIRouter()
 
-@router.post("/quests", summary="Создать новое задание", tags=["admin"])
-async def create_quest(data: QuestCreate, admin_secret: str, db: AsyncSession = Depends(get_db)):
-    if not check_admin(admin_secret):
+def _is_admin(secret: str) -> bool:
+    return secret == os.getenv("ADMIN_SECRET")
+
+@router.post("/quests", response_model=QuestOut)
+async def create_quest(payload: QuestUpsert, admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not _is_admin(admin_secret):
         raise HTTPException(403, "Forbidden")
     quest = Quest(
-        title=data.title,
-        quest_type=data.quest_type,
-        reward_type=data.reward_type,
-        reward_value=data.reward_value,
-        url=data.url,
-        description=data.description,
-        active=True
+        title=payload.title,
+        quest_type=payload.quest_type,
+        url=payload.url,
+        reward_type=payload.reward_type,
+        reward_value=payload.reward_value,
+        description=payload.description,
+        active=payload.active,
     )
     db.add(quest)
     await db.commit()
     await db.refresh(quest)
     return quest
 
-
-@router.delete("/quests/{quest_id}", summary="Удалить задание", tags=["admin"])
-async def delete_quest(quest_id: int, admin_secret: str, db: AsyncSession = Depends(get_db)):
-    if not check_admin(admin_secret):
+@router.get("/quests", response_model=list[QuestOut])
+async def list_quests(admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not _is_admin(admin_secret):
         raise HTTPException(403, "Forbidden")
-    quest = await db.get(Quest, quest_id)
-    if not quest:
-        raise HTTPException(404, "Задание не найдено")
-    await db.delete(quest)
-    await db.commit()
-    return {"status": "deleted", "quest_id": quest_id}
+    res = await db.execute(select(Quest).order_by(Quest.id.desc()))
+    return list(res.scalars())
 
-
-@router.patch("/quests/{quest_id}", summary="Обновить задание", tags=["admin"])
-async def update_quest(
-    quest_id: int,
-    data: QuestUpdate,
-    admin_secret: str,
-    db: AsyncSession = Depends(get_db)
-):
-    if not check_admin(admin_secret):
+@router.patch("/quests/{quest_id}", response_model=QuestOut)
+async def update_quest(quest_id: int, payload: QuestUpsert, admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not _is_admin(admin_secret):
         raise HTTPException(403, "Forbidden")
-    quest = await db.get(Quest, quest_id)
+    res = await db.execute(select(Quest).where(Quest.id == quest_id))
+    quest = res.scalar_one_or_none()
     if not quest:
-        raise HTTPException(404, "Задание не найдено")
-    for field, value in data.dict(exclude_unset=True).items():
-        setattr(quest, field, value)
+        raise HTTPException(404, "Quest not found")
+
+    quest.title = payload.title
+    quest.quest_type = payload.quest_type
+    quest.url = payload.url
+    quest.reward_type = payload.reward_type
+    quest.reward_value = payload.reward_value
+    quest.description = payload.description
+    quest.active = payload.active
+
     await db.commit()
     await db.refresh(quest)
     return quest
 
-
-@router.get("/quests")
-async def get_quests(
-    admin_secret: str,
-    db: AsyncSession = Depends(get_db)
-):
-    if not check_admin(admin_secret):
+@router.delete("/quests/{quest_id}")
+async def delete_quest(quest_id: int, admin_secret: str, db: AsyncSession = Depends(get_db)):
+    if not _is_admin(admin_secret):
         raise HTTPException(403, "Forbidden")
-    result = await db.execute(select(Quest).order_by(Quest.id.desc()))
-    return result.scalars().all()
+    await db.execute(delete(Quest).where(Quest.id == quest_id))
+    await db.commit()
+    return {"status": "ok"}
