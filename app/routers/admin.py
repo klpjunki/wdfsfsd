@@ -14,7 +14,7 @@ from sqlalchemy.orm import joinedload
 from app.models import ExchangeRequest
 from app.models import PromoCode
 from app.schemas import PromoCodeCreate
-from app.models import Quest  
+from app.models import Quest, UserQuestStatus
 from datetime import datetime, timedelta, timezone
 
 
@@ -420,6 +420,28 @@ async def update_quest(quest_id: int, payload: QuestUpsert, admin_secret: str, d
 async def delete_quest(quest_id: int, admin_secret: str, db: AsyncSession = Depends(get_db)):
     if not _is_admin(admin_secret):
         raise HTTPException(403, "Forbidden")
-    await db.execute(delete(Quest).where(Quest.id == quest_id))
-    await db.commit()
-    return {"status": "ok"}
+    
+    try:
+        # СНАЧАЛА удаляем все связанные записи в user_quest_status
+        print(f"🗑️ Удаляем связанные записи для квеста {quest_id}")
+        result = await db.execute(
+            delete(UserQuestStatus).where(UserQuestStatus.quest_id == quest_id)
+        )
+        print(f"✅ Удалено {result.rowcount} записей из user_quest_status")
+        
+        # ПОТОМ удаляем сам квест
+        print(f"🗑️ Удаляем квест {quest_id}")
+        quest_result = await db.execute(delete(Quest).where(Quest.id == quest_id))
+        
+        if quest_result.rowcount == 0:
+            raise HTTPException(404, "Quest not found")
+            
+        print(f"✅ Квест {quest_id} успешно удален")
+        await db.commit()
+        
+        return {"status": "ok", "message": f"Quest {quest_id} deleted successfully"}
+        
+    except Exception as e:
+        await db.rollback()
+        print(f"❌ Ошибка при удалении квеста {quest_id}: {str(e)}")
+        raise HTTPException(500, f"Failed to delete quest: {str(e)}")
