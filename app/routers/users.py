@@ -753,16 +753,18 @@ from app.schemas import QuestOut, StartQuestRequest, ClaimQuestRequest
 
 # === ИСПРАВЛЕННЫЕ ЭНДПОИНТЫ ДЛЯ ДИНАМИЧЕСКИХ КВЕСТОВ ===
 
+# ЗАМЕНИ ЭТОТ ЭНДПОИНТ В users.py
+
 @router.get("/quests/dynamic", response_model=list[QuestOut])
 async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
     """
-    Список активных динамических квестов с информацией о статусе для пользователя
+    Список активных динамических квестов с полной информацией о статусе для пользователя
     """
     # Получаем все активные квесты
     quests_res = await db.execute(select(Quest).where(Quest.active == True))
     quests = quests_res.scalars().all()
     
-    # Получаем статусы пользователя для этих квестов
+    # Получаем статусы пользователя для всех квестов
     statuses_res = await db.execute(
         select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
     )
@@ -774,6 +776,7 @@ async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_d
     for quest in quests:
         status = statuses.get(quest.id)
         
+        # Базовые данные квеста
         quest_data = {
             "id": quest.id,
             "title": quest.title,
@@ -786,35 +789,48 @@ async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_d
             "timer_started_at": None,
             "completed": False,
             "reward_claimed": False,
-            "can_claim": False
+            "can_claim": False,
+            "seconds_left": None
         }
         
         if status:
-            quest_data["timer_started_at"] = status.timer_started_at.isoformat() if status.timer_started_at else None
             quest_data["completed"] = status.completed
             quest_data["reward_claimed"] = status.reward_claimed
             
-            # Для YouTube квестов проверяем таймер
-            if quest.quest_type == "youtube" and status.timer_started_at and not status.reward_claimed:
-                elapsed = now - status.timer_started_at
-                if elapsed >= timedelta(minutes=10):
-                    quest_data["can_claim"] = True
-                    quest_data["completed"] = True
+            if status.timer_started_at:
+                quest_data["timer_started_at"] = status.timer_started_at.isoformat()
+                
+                # Для YouTube квестов проверяем таймер
+                if quest.quest_type == "youtube" and not status.reward_claimed:
+                    elapsed = now - status.timer_started_at
+                    wait_time = timedelta(minutes=10)
+                    
+                    if elapsed >= wait_time:
+                        # Таймер истек - можно забирать награду
+                        quest_data["can_claim"] = True
+                        quest_data["completed"] = True
+                        quest_data["seconds_left"] = 0
+                    else:
+                        # Таймер еще идет
+                        remaining = wait_time - elapsed
+                        quest_data["seconds_left"] = int(remaining.total_seconds())
+                        quest_data["can_claim"] = False
+                        quest_data["completed"] = False
             
             # Для Telegram квестов проверяем подписку
-            elif quest.quest_type == "telegram" and not status.reward_claimed:
+            if quest.quest_type == "telegram" and not status.reward_claimed:
                 try:
                     is_subscribed = await _check_tg_subscription(telegram_id, quest.url)
                     quest_data["completed"] = is_subscribed
                     quest_data["can_claim"] = is_subscribed
-                except:
+                except Exception as e:
+                    print(f"Error checking telegram subscription: {e}")
                     quest_data["completed"] = False
                     quest_data["can_claim"] = False
         
         result.append(quest_data)
     
     return result
-
 @router.post("/quests/start")
 async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
     user = await db.get(User, telegram_id)

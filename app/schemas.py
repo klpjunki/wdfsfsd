@@ -77,19 +77,19 @@ class QuestOut(BaseModel):
     title: str
     quest_type: Literal["youtube", "telegram"]
     url: Optional[str] = None
-    reward_type: Literal["coins", "energy", "boost"]  # ДОБАВЛЕН "boost"
+    reward_type: Literal["coins", "energy", "boost"]  # ДОБАВЬ "boost" если его нет
     reward_value: int
     description: Optional[str] = None
     active: Optional[bool] = True
     
-    # ДОБАВЛЯЕМ ПОЛЯ ДЛЯ СТАТУСА ВЫПОЛНЕНИЯ
     timer_started_at: Optional[str] = None
     completed: bool = False
     reward_claimed: bool = False
-    can_claim: bool = False  # для проверки возможности получения награды
+    can_claim: bool = False
+    seconds_left: Optional[int] = None
 
     class Config:
-        from_attributes = True
+        from_attributes = Truetes = True
 
 # пользователь: начало выполнения и получение награды
 class StartQuestRequest(BaseModel):
