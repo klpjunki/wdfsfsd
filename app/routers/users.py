@@ -741,16 +741,13 @@ async def exchange_currency(
 
 
 
-
-from datetime import datetime, timedelta, timezone
-from sqlalchemy.future import select
-from app.models import User, Quest, UserQuestStatus
-from app.schemas import QuestOut, StartQuestRequest, ClaimQuestRequest
-
-QUEST_DURATION = 600
+QUEST_DURATION = 600  # 10 минут
 
 @router.post("/quests/start")
 async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    # логирование для отладки (в логи бота / stdout)
+    print(f"[start] start_quest request: telegram_id={telegram_id}, quest_id={body.quest_id}")
+
     user = await db.get(User, telegram_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -772,16 +769,19 @@ async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSessio
         db.add(us)
         await db.flush()
 
-    us.timer_started_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    us.timer_started_at = now
     us.completed = False
     us.reward_claimed = False
 
     await db.commit()
     await db.refresh(us)
 
+    # возвращаем единообразно timer_started_at и seconds_left
+    print(f"[start] timer_started_at set to {us.timer_started_at.isoformat()}")
     return {
         "status": "started",
-        "timer_started": us.timer_started_at.isoformat() if us.timer_started_at else None,
+        "timer_started_at": us.timer_started_at.isoformat() if us.timer_started_at else None,
         "quest_type": quest.quest_type,
         "seconds_left": QUEST_DURATION
     }
@@ -789,14 +789,13 @@ async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSessio
 
 @router.get("/quests/dynamic")
 async def get_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
+    print(f"[dynamic] get_dynamic_quests for telegram_id={telegram_id}")
     now = datetime.now(timezone.utc)
 
     res_q = await db.execute(select(Quest).where(Quest.active == True))
     quests = res_q.scalars().all()
 
-    res_us = await db.execute(
-        select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
-    )
+    res_us = await db.execute(select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id))
     statuses = res_us.scalars().all()
     status_map = {s.quest_id: s for s in statuses}
 
@@ -839,6 +838,7 @@ async def get_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db
 
 @router.post("/quests/claim")
 async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    print(f"[claim] claim_quest: telegram_id={telegram_id}, quest_id={body.quest_id}")
     quest_id = body.quest_id
     user = await db.get(User, telegram_id)
     if not user:
@@ -868,6 +868,7 @@ async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSessio
     if seconds_left > 0:
         raise HTTPException(status_code=400, detail=f"Timer not finished, seconds_left: {seconds_left}")
 
+    # выдача награды
     us.reward_claimed = True
     us.completed = True
 
@@ -878,13 +879,20 @@ async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSessio
         user.coins = (user.coins or 0) + int(rv or 0)
     elif rt == "energy":
         max_e = getattr(user, "max_energy", None)
-        cur = getattr(user, "energy", 0) or 0
+        cur = (getattr(user, "energy", None) or 0)
         if max_e is not None:
             user.energy = min(max_e, cur + int(rv or 0))
         else:
             user.energy = cur + int(rv or 0)
+    elif rt == "boost":
+        # пример: установить boost_multiplier и expiry
+        # boost_duration_minutes можно взять с quest.boost_duration_minutes
+        dur = getattr(quest, "boost_duration_minutes", 10)
+        user.boost_multiplier = max(getattr(user, "boost_multiplier", 1), 2)  # пример множителя
+        user.boost_expiry = now + timedelta(minutes=dur)
     else:
-        pass
+        # неизвестный тип — ничего не делаем, можно логировать
+        print(f"[claim] unknown reward_type: {rt}")
 
     db.add(user)
     await db.commit()

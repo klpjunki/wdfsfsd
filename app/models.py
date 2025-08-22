@@ -79,7 +79,7 @@ class UserQuestStatus(Base):
 
     completed = Column(Boolean, default=False, nullable=False)
     # для YouTube-таймера (10 мин). Для Telegram можно не трогать.
-    timer_started_at = Column(DateTime, nullable=True)
+    timer_started_at = Column(DateTime(timezone=True), nullable=True)
     reward_claimed = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", backref="quest_statuses")
