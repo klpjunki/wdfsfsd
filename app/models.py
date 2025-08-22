@@ -61,13 +61,13 @@ class Quest(Base):
     active       = Column(Boolean, default=True)
     created_at   = Column(DateTime, default=datetime.now)
 
-    # ссылка на задание:
     #  - youtube: ссылка на видео/канал
     #  - telegram: @username / https://t.me/username / numeric chat_id
     url          = Column(String(255), nullable=True)
 
     # опционально краткое описание
     description  = Column(String(255), nullable=True)
+    boost_duration_minutes = Column(Integer, default=10, nullable=False)
 
 
 class UserQuestStatus(Base):
