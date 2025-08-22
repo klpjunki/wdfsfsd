@@ -82,6 +82,7 @@ class QuestOut(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = True
     
+    # ДОБАВЬ ЭТИ ПОЛЯ:
     timer_started_at: Optional[str] = None
     completed: bool = False
     reward_claimed: bool = False
@@ -89,8 +90,7 @@ class QuestOut(BaseModel):
     seconds_left: Optional[int] = None
 
     class Config:
-        from_attributes = Truetes = True
-
+        from_attributes = True
 # пользователь: начало выполнения и получение награды
 class StartQuestRequest(BaseModel):
     quest_id: int

@@ -755,20 +755,26 @@ from app.schemas import QuestOut, StartQuestRequest, ClaimQuestRequest
 
 # ЗАМЕНИ ЭТОТ ЭНДПОИНТ В users.py
 
+# ЗАМЕНИ ПОЛНОСТЬЮ ЭТОТ ЭНДПОИНТ В users.py
+
 @router.get("/quests/dynamic", response_model=list[QuestOut])
 async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
     """
     Список активных динамических квестов с полной информацией о статусе для пользователя
     """
+    print(f"🔍 Загружаем квесты для пользователя {telegram_id}")
+    
     # Получаем все активные квесты
     quests_res = await db.execute(select(Quest).where(Quest.active == True))
     quests = quests_res.scalars().all()
+    print(f"📝 Найдено {len(quests)} активных квестов")
     
     # Получаем статусы пользователя для всех квестов
     statuses_res = await db.execute(
         select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
     )
     statuses = {s.quest_id: s for s in statuses_res.scalars().all()}
+    print(f"📊 Статусы пользователя: {len(statuses)} записей")
     
     result = []
     now = datetime.now(timezone.utc)
@@ -805,17 +811,21 @@ async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_d
                     elapsed = now - status.timer_started_at
                     wait_time = timedelta(minutes=10)
                     
+                    print(f"⏰ Квест {quest.id}: прошло {elapsed.total_seconds()} секунд из {wait_time.total_seconds()}")
+                    
                     if elapsed >= wait_time:
                         # Таймер истек - можно забирать награду
                         quest_data["can_claim"] = True
                         quest_data["completed"] = True
                         quest_data["seconds_left"] = 0
+                        print(f"✅ Квест {quest.id}: можно забрать награду")
                     else:
                         # Таймер еще идет
                         remaining = wait_time - elapsed
                         quest_data["seconds_left"] = int(remaining.total_seconds())
                         quest_data["can_claim"] = False
                         quest_data["completed"] = False
+                        print(f"⏳ Квест {quest.id}: осталось {quest_data['seconds_left']} секунд")
             
             # Для Telegram квестов проверяем подписку
             if quest.quest_type == "telegram" and not status.reward_claimed:
@@ -823,16 +833,27 @@ async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_d
                     is_subscribed = await _check_tg_subscription(telegram_id, quest.url)
                     quest_data["completed"] = is_subscribed
                     quest_data["can_claim"] = is_subscribed
+                    print(f"📱 Квест {quest.id}: подписка {'✅' if is_subscribed else '❌'}")
                 except Exception as e:
-                    print(f"Error checking telegram subscription: {e}")
+                    print(f"❌ Ошибка проверки подписки для квеста {quest.id}: {e}")
                     quest_data["completed"] = False
                     quest_data["can_claim"] = False
+        else:
+            print(f"🆕 Квест {quest.id}: статус не найден (новый квест)")
         
         result.append(quest_data)
+        print(f"📋 Квест {quest.id}: {quest_data}")
     
+    print(f"🚀 Возвращаем {len(result)} квестов")
     return result
+
+
+# ТАКЖЕ ЗАМЕНИ ЭНДПОИНТ /quests/start В users.py:
+
 @router.post("/quests/start")
 async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    print(f"🚀 Запуск квеста {body.quest_id} для пользователя {telegram_id}")
+    
     user = await db.get(User, telegram_id)
     if not user:
         raise HTTPException(404, "User not found")
@@ -841,6 +862,8 @@ async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSessio
     quest = res.scalar_one_or_none()
     if not quest:
         raise HTTPException(404, "Quest not found or inactive")
+
+    print(f"📋 Квест найден: {quest.title} ({quest.quest_type})")
 
     # найдём/создадим статус
     res_us = await db.execute(
@@ -851,18 +874,27 @@ async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSessio
     )
     us = res_us.scalar_one_or_none()
     if not us:
+        print(f"🆕 Создаем новый статус квеста")
         us = UserQuestStatus(user_id=telegram_id, quest_id=quest.id)
         db.add(us)
+    else:
+        print(f"📊 Обновляем существующий статус квеста")
 
     # для youtube — фиксируем старт таймера
     if quest.quest_type == "youtube":
         us.timer_started_at = datetime.now(timezone.utc)
-        us.completed = False  # сбрасываем статус при повторном старте
+        us.completed = False  # сбрасываем при перезапуске
         us.reward_claimed = False
+        print(f"⏰ YouTube таймер запущен: {us.timer_started_at}")
 
     await db.commit()
-    return {"status": "started"}
-
+    print(f"✅ Квест успешно запущен")
+    
+    return {
+        "status": "started", 
+        "timer_started": us.timer_started_at.isoformat() if us.timer_started_at else None,
+        "quest_type": quest.quest_type
+    }
 @router.post("/quests/claim")
 async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
     user = await db.get(User, telegram_id)
