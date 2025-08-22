@@ -743,9 +743,9 @@ async def exchange_currency(
 
 QUEST_DURATION = 600  # 10 минут
 
+# ----------------- START QUEST -----------------
 @router.post("/quests/start")
 async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
-    # логирование для отладки (в логи бота / stdout)
     print(f"[start] start_quest request: telegram_id={telegram_id}, quest_id={body.quest_id}")
 
     user = await db.get(User, telegram_id)
@@ -769,24 +769,31 @@ async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSessio
         db.add(us)
         await db.flush()
 
-    now = datetime.now(timezone.utc)
-    us.timer_started_at = now
-    us.completed = False
-    us.reward_claimed = False
+    # Запускаем таймер только если еще не был запущен
+    if not us.timer_started_at:
+        now = datetime.now(timezone.utc)
+        us.timer_started_at = now
+        us.completed = False
+        us.reward_claimed = False
+        await db.commit()
+        await db.refresh(us)
+        print(f"[start] timer_started_at set to {us.timer_started_at.isoformat()}")
+    else:
+        print(f"[start] timer already started at {us.timer_started_at.isoformat()}")
 
-    await db.commit()
-    await db.refresh(us)
+    seconds_left = 0
+    if us.timer_started_at:
+        elapsed = (datetime.now(timezone.utc) - us.timer_started_at).total_seconds()
+        seconds_left = max(0, int(QUEST_DURATION - elapsed))
 
-    # возвращаем единообразно timer_started_at и seconds_left
-    print(f"[start] timer_started_at set to {us.timer_started_at.isoformat()}")
     return {
         "status": "started",
         "timer_started_at": us.timer_started_at.isoformat() if us.timer_started_at else None,
         "quest_type": quest.quest_type,
-        "seconds_left": QUEST_DURATION
+        "seconds_left": seconds_left
     }
 
-
+# ----------------- GET DYNAMIC QUESTS -----------------
 @router.get("/quests/dynamic")
 async def get_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
     print(f"[dynamic] get_dynamic_quests for telegram_id={telegram_id}")
@@ -835,11 +842,12 @@ async def get_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db
 
     return out
 
-
+# ----------------- CLAIM QUEST -----------------
 @router.post("/quests/claim")
 async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
     print(f"[claim] claim_quest: telegram_id={telegram_id}, quest_id={body.quest_id}")
     quest_id = body.quest_id
+
     user = await db.get(User, telegram_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -868,7 +876,7 @@ async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSessio
     if seconds_left > 0:
         raise HTTPException(status_code=400, detail=f"Timer not finished, seconds_left: {seconds_left}")
 
-    # выдача награды
+    # Выдача награды
     us.reward_claimed = True
     us.completed = True
 
@@ -885,13 +893,10 @@ async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSessio
         else:
             user.energy = cur + int(rv or 0)
     elif rt == "boost":
-        # пример: установить boost_multiplier и expiry
-        # boost_duration_minutes можно взять с quest.boost_duration_minutes
         dur = getattr(quest, "boost_duration_minutes", 10)
-        user.boost_multiplier = max(getattr(user, "boost_multiplier", 1), 2)  # пример множителя
+        user.boost_multiplier = max(getattr(user, "boost_multiplier", 1), 2)
         user.boost_expiry = now + timedelta(minutes=dur)
     else:
-        # неизвестный тип — ничего не делаем, можно логировать
         print(f"[claim] unknown reward_type: {rt}")
 
     db.add(user)
