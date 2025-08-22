@@ -742,296 +742,160 @@ async def exchange_currency(
 
 
 
-
-# ИСПРАВЛЕННАЯ ЧАСТЬ users.py для квестов
-
-# Добавляем в импорты в начале файла
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.future import select
 from app.models import User, Quest, UserQuestStatus
 from app.schemas import QuestOut, StartQuestRequest, ClaimQuestRequest
 
-# === ИСПРАВЛЕННЫЕ ЭНДПОИНТЫ ДЛЯ ДИНАМИЧЕСКИХ КВЕСТОВ ===
-
-# ЗАМЕНИ ЭТОТ ЭНДПОИНТ В users.py
-
-# ЗАМЕНИ ПОЛНОСТЬЮ ЭТОТ ЭНДПОИНТ В users.py
-
-@router.get("/quests/dynamic", response_model=list[QuestOut])
-async def list_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Список активных динамических квестов с полной информацией о статусе для пользователя
-    """
-    print(f"🔍 Загружаем квесты для пользователя {telegram_id}")
-    
-    # Получаем все активные квесты
-    quests_res = await db.execute(select(Quest).where(Quest.active == True))
-    quests = quests_res.scalars().all()
-    print(f"📝 Найдено {len(quests)} активных квестов")
-    
-    # Получаем статусы пользователя для всех квестов
-    statuses_res = await db.execute(
-        select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
-    )
-    statuses = {s.quest_id: s for s in statuses_res.scalars().all()}
-    print(f"📊 Статусы пользователя: {len(statuses)} записей")
-    
-    result = []
-    now = datetime.now(timezone.utc)
-    
-    for quest in quests:
-        status = statuses.get(quest.id)
-        
-        # Базовые данные квеста
-        quest_data = {
-            "id": quest.id,
-            "title": quest.title,
-            "quest_type": quest.quest_type,
-            "url": quest.url,
-            "reward_type": quest.reward_type,
-            "reward_value": quest.reward_value,
-            "description": quest.description,
-            "active": quest.active,
-            "timer_started_at": None,
-            "completed": False,
-            "reward_claimed": False,
-            "can_claim": False,
-            "seconds_left": None
-        }
-        
-        if status:
-            quest_data["completed"] = status.completed
-            quest_data["reward_claimed"] = status.reward_claimed
-            
-            if status.timer_started_at:
-                quest_data["timer_started_at"] = status.timer_started_at.isoformat()
-                
-                # Для YouTube квестов проверяем таймер
-                if quest.quest_type == "youtube" and not status.reward_claimed:
-                    elapsed = now - status.timer_started_at
-                    wait_time = timedelta(minutes=10)
-                    
-                    print(f"⏰ Квест {quest.id}: прошло {elapsed.total_seconds()} секунд из {wait_time.total_seconds()}")
-                    
-                    if elapsed >= wait_time:
-                        # Таймер истек - можно забирать награду
-                        quest_data["can_claim"] = True
-                        quest_data["completed"] = True
-                        quest_data["seconds_left"] = 0
-                        print(f"✅ Квест {quest.id}: можно забрать награду")
-                    else:
-                        # Таймер еще идет
-                        remaining = wait_time - elapsed
-                        quest_data["seconds_left"] = int(remaining.total_seconds())
-                        quest_data["can_claim"] = False
-                        quest_data["completed"] = False
-                        print(f"⏳ Квест {quest.id}: осталось {quest_data['seconds_left']} секунд")
-            
-            # Для Telegram квестов проверяем подписку
-            if quest.quest_type == "telegram" and not status.reward_claimed:
-                try:
-                    is_subscribed = await _check_tg_subscription(telegram_id, quest.url)
-                    quest_data["completed"] = is_subscribed
-                    quest_data["can_claim"] = is_subscribed
-                    print(f"📱 Квест {quest.id}: подписка {'✅' if is_subscribed else '❌'}")
-                except Exception as e:
-                    print(f"❌ Ошибка проверки подписки для квеста {quest.id}: {e}")
-                    quest_data["completed"] = False
-                    quest_data["can_claim"] = False
-        else:
-            print(f"🆕 Квест {quest.id}: статус не найден (новый квест)")
-        
-        result.append(quest_data)
-        print(f"📋 Квест {quest.id}: {quest_data}")
-    
-    print(f"🚀 Возвращаем {len(result)} квестов")
-    return result
-
-
-# ТАКЖЕ ЗАМЕНИ ЭНДПОИНТ /quests/start В users.py:
+QUEST_DURATION = 600
 
 @router.post("/quests/start")
 async def start_quest(body: StartQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
-    print(f"🚀 Запуск квеста {body.quest_id} для пользователя {telegram_id}")
-    
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    res = await db.execute(select(Quest).where(Quest.id == body.quest_id, Quest.active == True))
-    quest = res.scalar_one_or_none()
-    if not quest:
-        raise HTTPException(404, "Quest not found or inactive")
-
-    print(f"📋 Квест найден: {quest.title} ({quest.quest_type})")
-
-    # найдём/создадим статус
-    res_us = await db.execute(
-        select(UserQuestStatus).where(
-            UserQuestStatus.user_id == telegram_id,
-            UserQuestStatus.quest_id == quest.id
-        )
-    )
-    us = res_us.scalar_one_or_none()
-    if not us:
-        print(f"🆕 Создаем новый статус квеста")
-        us = UserQuestStatus(user_id=telegram_id, quest_id=quest.id)
-        db.add(us)
-    else:
-        print(f"📊 Обновляем существующий статус квеста")
-
-    # для youtube — фиксируем старт таймера
-    if quest.quest_type == "youtube":
-        us.timer_started_at = datetime.now(timezone.utc)
-        us.completed = False  # сбрасываем при перезапуске
-        us.reward_claimed = False
-        print(f"⏰ YouTube таймер запущен: {us.timer_started_at}")
-
-    await db.commit()
-    print(f"✅ Квест успешно запущен")
-    
-    return {
-        "status": "started", 
-        "timer_started": us.timer_started_at.isoformat() if us.timer_started_at else None,
-        "quest_type": quest.quest_type
-    }
-@router.post("/quests/claim")
-async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
-    user = await db.get(User, telegram_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    res = await db.execute(select(Quest).where(Quest.id == body.quest_id, Quest.active == True))
-    quest = res.scalar_one_or_none()
-    if not quest:
-        raise HTTPException(404, "Quest not found or inactive")
-
-    res_us = await db.execute(
-        select(UserQuestStatus).where(
-            UserQuestStatus.user_id == telegram_id,
-            UserQuestStatus.quest_id == quest.id
-        )
-    )
-    us = res_us.scalar_one_or_none()
-    if not us:
-        raise HTTPException(400, "Quest not started")
-
-    if us.reward_claimed:
-        return {"status": "already_claimed"}
-
-    # проверяем условия
-    if quest.quest_type == "youtube":
-        if not us.timer_started_at:
-            raise HTTPException(400, "Quest not started")
-        if datetime.now(timezone.utc) < us.timer_started_at + timedelta(minutes=10):
-            seconds_left = int((us.timer_started_at + timedelta(minutes=10) - datetime.now(timezone.utc)).total_seconds())
-            raise HTTPException(400, f"Wait {seconds_left} seconds")
-
-    elif quest.quest_type == "telegram":
-        try:
-            ok = await _check_tg_subscription(user_telegram_id=telegram_id, channel_ref=quest.url)
-            if not ok:
-                raise HTTPException(400, "Подпишитесь на канал и попробуйте снова")
-        except Exception as e:
-            print(f"Error checking telegram subscription: {e}")
-            raise HTTPException(400, "Ошибка проверки подписки")
-
-    # ИСПРАВЛЕННАЯ ЛОГИКА ВЫДАЧИ НАГРАДЫ
-    now_utc = datetime.now(timezone.utc)
-    
-    # Проверяем активен ли буст у пользователя
-    boost_active = False
-    if user.boost_expiry:
-        boost_expiry_utc = user.boost_expiry.astimezone(timezone.utc) if user.boost_expiry.tzinfo else user.boost_expiry.replace(tzinfo=timezone.utc)
-        boost_active = boost_expiry_utc > now_utc
-    
-    # Выдаём награду
-    if quest.reward_type == "boost":
-        # Устанавливаем буст пользователю
-        user.boost_multiplier = quest.reward_value
-        user.boost_expiry = now_utc + timedelta(minutes=10)  # буст на 10 минут
-        reward_message = f"Boost x{quest.reward_value} на 10 минут"
-        
-    elif quest.reward_type == "coins":
-        reward = quest.reward_value
-        # Если у пользователя активен буст, применяем его к награде
-        if boost_active and user.boost_multiplier > 1:
-            reward *= user.boost_multiplier
-        user.coins += reward
-        reward_message = f"{reward} coins"
-        
-    elif quest.reward_type == "energy":
-        reward = quest.reward_value
-        # Если у пользователя активен буст, применяем его к награде
-        if boost_active and user.boost_multiplier > 1:
-            reward *= user.boost_multiplier
-        user.energy = min(user.max_energy, user.energy + reward)
-        reward_message = f"{reward} energy"
-
-    us.completed = True
-    us.reward_claimed = True
-
-    await db.commit()
-    return {"status": "claimed", "reward": quest.reward_type, "amount": quest.reward_value, "message": reward_message}
-
-
-# ИСПРАВЛЕННАЯ ЛОГИКА КЛИКОВ (заменить существующий эндпоинт)
-@router.post("/{telegram_id}/click", response_model=ClickResponse)
-async def click_coin(
-    telegram_id: int,
-    click_data: ClickRequest = ClickRequest(),
-    db: AsyncSession = Depends(get_db)
-):
     user = await db.get(User, telegram_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    try:
-        calculate_energy_regeneration(user)
+    res = await db.execute(select(Quest).where(Quest.id == body.quest_id, Quest.active == True))
+    quest = res.scalar_one_or_none()
+    if not quest:
+        raise HTTPException(status_code=404, detail="Quest not found or inactive")
 
-        if user.energy < 10:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Not enough energy. Current: {user.energy}, Required: 10"
-            )
-
-        now = datetime.now(timezone.utc)
-        
-        # ИСПРАВЛЕННАЯ ПРОВЕРКА BOOST
-        boost_active = False
-        boost_multiplier = 1
-        
-        if user.boost_expiry:
-            boost_expiry_utc = user.boost_expiry.astimezone(timezone.utc) if user.boost_expiry.tzinfo else user.boost_expiry.replace(tzinfo=timezone.utc)
-            boost_active = boost_expiry_utc > now
-            if boost_active:
-                boost_multiplier = user.boost_multiplier
-
-        coins_per_click = boost_multiplier  # используем boost_multiplier напрямую
-        
-        user.energy = max(user.energy - 10, 0)
-        user.coins += coins_per_click
-        user.total_clicks += 1
-
-        old_level = user.level
-        new_level = min(10, 1 + (user.total_clicks // 10000))
-        if new_level != old_level:
-            user.level = new_level
-            user.max_energy = get_max_energy(new_level)
-            user.energy = min(user.energy, user.max_energy)
-
-        await db.commit()
-        await db.refresh(user)
-
-        return ClickResponse(
-            coins=user.coins,
-            energy=user.energy,
-            total_clicks=user.total_clicks
+    res_us = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest.id
         )
+    )
+    us = res_us.scalar_one_or_none()
+    if not us:
+        us = UserQuestStatus(user_id=telegram_id, quest_id=quest.id)
+        db.add(us)
+        await db.flush()
 
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal error: {str(e)}"
+    us.timer_started_at = datetime.now(timezone.utc)
+    us.completed = False
+    us.reward_claimed = False
+
+    await db.commit()
+    await db.refresh(us)
+
+    return {
+        "status": "started",
+        "timer_started": us.timer_started_at.isoformat() if us.timer_started_at else None,
+        "quest_type": quest.quest_type,
+        "seconds_left": QUEST_DURATION
+    }
+
+
+@router.get("/quests/dynamic")
+async def get_dynamic_quests(telegram_id: int, db: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+
+    res_q = await db.execute(select(Quest).where(Quest.active == True))
+    quests = res_q.scalars().all()
+
+    res_us = await db.execute(
+        select(UserQuestStatus).where(UserQuestStatus.user_id == telegram_id)
+    )
+    statuses = res_us.scalars().all()
+    status_map = {s.quest_id: s for s in statuses}
+
+    out = []
+    for q in quests:
+        us = status_map.get(q.id)
+        timer_started = None
+        seconds_left = 0
+        can_claim = False
+        reward_claimed = False
+        completed = False
+
+        if us:
+            timer_started = us.timer_started_at
+            reward_claimed = bool(us.reward_claimed)
+            completed = bool(us.completed)
+            if us.timer_started_at:
+                elapsed = (now - us.timer_started_at).total_seconds()
+                seconds_left = max(0, int(QUEST_DURATION - elapsed))
+                if seconds_left == 0 and not us.reward_claimed:
+                    can_claim = True
+
+        out.append({
+            "id": q.id,
+            "title": q.title,
+            "description": getattr(q, "description", None),
+            "quest_type": q.quest_type,
+            "timer_started_at": timer_started.isoformat() if timer_started else None,
+            "seconds_left": seconds_left,
+            "can_claim": can_claim,
+            "reward_claimed": reward_claimed,
+            "completed": completed,
+            "reward_type": getattr(q, "reward_type", None),
+            "reward_value": getattr(q, "reward_value", None),
+            "url": getattr(q, "url", None)
+        })
+
+    return out
+
+
+@router.post("/quests/claim")
+async def claim_quest(body: ClaimQuestRequest, telegram_id: int, db: AsyncSession = Depends(get_db)):
+    quest_id = body.quest_id
+    user = await db.get(User, telegram_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    res_q = await db.execute(select(Quest).where(Quest.id == quest_id, Quest.active == True))
+    quest = res_q.scalar_one_or_none()
+    if not quest:
+        raise HTTPException(status_code=404, detail="Quest not found or inactive")
+
+    res_us = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest.id
         )
+    )
+    us = res_us.scalar_one_or_none()
+    if not us or not us.timer_started_at:
+        raise HTTPException(status_code=400, detail="Quest not started")
+
+    if us.reward_claimed:
+        raise HTTPException(status_code=400, detail="Reward already claimed")
+
+    now = datetime.now(timezone.utc)
+    elapsed = (now - us.timer_started_at).total_seconds()
+    seconds_left = max(0, int(QUEST_DURATION - elapsed))
+    if seconds_left > 0:
+        raise HTTPException(status_code=400, detail=f"Timer not finished, seconds_left: {seconds_left}")
+
+    us.reward_claimed = True
+    us.completed = True
+
+    rt = getattr(quest, "reward_type", None)
+    rv = getattr(quest, "reward_value", 0)
+
+    if rt == "coins":
+        user.coins = (user.coins or 0) + int(rv or 0)
+    elif rt == "energy":
+        max_e = getattr(user, "max_energy", None)
+        cur = getattr(user, "energy", 0) or 0
+        if max_e is not None:
+            user.energy = min(max_e, cur + int(rv or 0))
+        else:
+            user.energy = cur + int(rv or 0)
+    else:
+        pass
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    await db.refresh(us)
+
+    return {
+        "status": "claimed",
+        "quest_id": quest.id,
+        "reward_type": rt,
+        "reward_value": rv,
+        "user_coins": user.coins,
+        "user_energy": getattr(user, "energy", None)
+    }
