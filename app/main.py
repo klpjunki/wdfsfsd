@@ -60,7 +60,6 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 app.include_router(users.router, prefix="/api/users")
-app.include_router(quests.router, prefix="/api/quests")
 app.include_router(admin.router, prefix="/api/admin")
 
 @app.get("/")

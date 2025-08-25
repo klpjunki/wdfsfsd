@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from enum import Enum
+from datetime import datetime
 
 # --- твои валюты ---
 class CurrencyType(str, Enum):
@@ -59,41 +60,107 @@ class PromoCodeCreate(BaseModel):
     value: int
     uses_left: int = 1
 
-# ============== ИСПРАВЛЕННЫЕ СХЕМЫ ДЛЯ ДИНАМИЧЕСКИХ КВЕСТОВ ==============
-
-# админ создаёт/обновляет квест - ДОБАВЛЕН "boost"
-class QuestUpsert(BaseModel):
+class QuestStatusResponse(BaseModel):
+    """Ответ для статуса квеста"""
+    quest_id: int
+    quest_type: str
     title: str
-    quest_type: Literal["youtube", "telegram"]
-    url: str
-    reward_type: Literal["coins", "energy", "boost"]  # ДОБАВЛЕН "boost"
-    reward_value: int = Field(ge=1)
+    completed: bool
+    reward_claimed: bool
+    
+    # YouTube specific fields
+    timer_started_at: Optional[str] = None
+    seconds_left: int = 0
+    can_claim: bool = False
+    
+    # Telegram specific fields  
+    can_subscribe: bool = False
+
+class YouTubeQuestStartResponse(BaseModel):
+    """Ответ при начале YouTube квеста"""
+    status: str  # "timer_started"
+    quest_id: int
+    timer_started_at: str
+    seconds_left: int
+    can_claim: bool
+    youtube_url: Optional[str] = None
+
+class QuestClaimResponse(BaseModel):
+    """Ответ при получении награды"""
+    status: str  # "claimed"
+    quest_id: int
+    reward_type: str
+    reward_value: int
+    user_coins: int
+    user_energy: Optional[int] = None
+
+class TelegramQuestResponse(BaseModel):
+    """Ответ для Telegram квеста"""
+    status: str  # "not_subscribed", "completed", "already_completed"
+    message: str
+    quest_id: Optional[int] = None
+    reward_type: Optional[str] = None
+    reward_value: Optional[int] = None
+    user_coins: Optional[int] = None
+    user_energy: Optional[int] = None
+    telegram_url: Optional[str] = None
+    need_subscription: bool = False
+
+class DynamicQuestResponse(BaseModel):
+    """Ответ для списка динамических квестов"""
+    id: int
+    title: str
+    description: Optional[str] = None
+    quest_type: str
+    reward_type: str
+    reward_value: int
+    url: Optional[str] = None
+    completed: bool
+    reward_claimed: bool
+    quest_status: str  # "not_started", "timer_running", "ready_to_claim", "completed", "not_completed"
+    
+    # YouTube specific
+    timer_started_at: Optional[str] = None
+    seconds_left: int = 0
+    can_claim: bool = False
+    
+    # Telegram specific
+    can_subscribe: bool = False
+
+# ===== СХЕМЫ ДЛЯ ADMIN.PY (НЕДОСТАЮЩИЕ) =====
+
+class QuestUpsert(BaseModel):
+    """Схема для создания/обновления квеста"""
+    title: str
+    quest_type: str  # "youtube" | "telegram"
+    reward_type: str  # "coins" | "energy" | "boost"
+    reward_value: int
+    url: Optional[str] = None
     description: Optional[str] = None
     active: bool = True
 
-# выдаём квест на фронт - ДОБАВЛЕН "boost"
 class QuestOut(BaseModel):
+    """Схема для вывода квеста"""
     id: int
     title: str
-    quest_type: Literal["youtube", "telegram"]
-    url: Optional[str] = None
-    reward_type: Literal["coins", "energy", "boost"]  # ДОБАВЬ "boost" если его нет
+    quest_type: str
+    reward_type: str
     reward_value: int
+    url: Optional[str] = None
     description: Optional[str] = None
-    active: Optional[bool] = True
-    
-    # ДОБАВЬ ЭТИ ПОЛЯ:
-    timer_started_at: Optional[str] = None
-    completed: bool = False
-    reward_claimed: bool = False
-    can_claim: bool = False
-    seconds_left: Optional[int] = None
+    active: bool
+    created_at: Optional[datetime] = None
+    boost_duration_minutes: int = 10
 
     class Config:
         from_attributes = True
-# пользователь: начало выполнения и получение награды
+
+# ===== СХЕМЫ ДЛЯ USERS.PY (НЕДОСТАЮЩИЕ) =====
+
 class StartQuestRequest(BaseModel):
+    """Запрос на начало квеста"""
     quest_id: int
 
 class ClaimQuestRequest(BaseModel):
+    """Запрос на получение награды"""
     quest_id: int
