@@ -839,6 +839,57 @@ async def claim_youtube_quest(
         "user_energy": getattr(user, "energy", None)
     }
 
+@router.get("/quests/youtube/{quest_id}/status")
+async def youtube_quest_status(
+    quest_id: int,
+    telegram_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Этап 2: Проверка статуса YouTube квеста (например, при перезагрузке фронта)"""
+    user = await db.get(User, telegram_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    result = await db.execute(
+        select(Quest).where(
+            Quest.id == quest_id,
+            Quest.active == True,
+            Quest.quest_type == "youtube"
+        )
+    )
+    quest = result.scalar_one_or_none()
+    if not quest:
+        raise HTTPException(404, "YouTube quest not found")
+
+    # Проверяем статус
+    result_us = await db.execute(
+        select(UserQuestStatus).where(
+            UserQuestStatus.user_id == telegram_id,
+            UserQuestStatus.quest_id == quest.id
+        )
+    )
+    user_status = result_us.scalar_one_or_none()
+    if not user_status or not user_status.timer_started_at:
+        return {
+            "status": "not_started",
+            "quest_id": quest.id,
+            "seconds_left": None,
+            "can_claim": False,
+            "youtube_url": quest.url
+        }
+
+    # Считаем сколько осталось
+    elapsed = (datetime.now(timezone.utc) - user_status.timer_started_at).total_seconds()
+    seconds_left = max(0, int(QUEST_DURATION - elapsed))
+
+    return {
+        "status": "in_progress" if not user_status.reward_claimed else "completed",
+        "quest_id": quest.id,
+        "seconds_left": seconds_left,
+        "can_claim": seconds_left == 0 and not user_status.reward_claimed,
+        "youtube_url": quest.url
+    }
+
 # ===== TELEGRAM КВЕСТЫ =====
 
 @router.post("/quests/telegram/{quest_id}/subscribe")
